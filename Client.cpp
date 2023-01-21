@@ -1,162 +1,170 @@
-s/** 
- * CSS 432 - HW1 
- * Professor Yang Peng
- * Created by Milton Melson
- * 
- * Client.cpp 
-      The client will create a new socket, connect to the server, and send data 
-      using three different ways of writing data (data transferring). It will then wait for 
-      a response and output the response.
-*/
+/*!
+ * Simple chat program (client side).cpp - http://github.com/hassanyf
+ * Version - 2.0.1
+ *
+ * Copyright (c) 2016 Hassan M. Yousuf
+ */
 
 #include <iostream>
-#include <cstdlib>        // atoi
-#include <sys/time.h>     // gettimeofday
-#include <sys/types.h>    // socket, bind 
-#include <sys/socket.h>   // socket, bind, listen, inet_ntoa 
-#include <netinet/in.h>   // htonl, htons, inet_ntoa 
-#include <arpa/inet.h>    // inet_ntoa 
-#include <netdb.h>        // gethostbyname 
-#include <unistd.h>       // read, write, close 
-#include <strings.h>      // bzero 
-#include <netinet/tcp.h>  // SO_REUSEADDR 
-#include <sys/uio.h>      // writev 
-#include <cstring>        // memset 
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <netdb.h>
 
 using namespace std;
 
-const int DATABUFFSIZE = 1500;   // current max data buffer size
+int main()
+{
+    /* ---------- INITIALIZING VARIABLES ---------- */
 
-// Helper functions
-void printStats(int type, long DTT, long RTT, int reads);
-long elapsedTime(timeval start, timeval stop);
+    /*  
+       1. client is a file descriptor to store the values 
+       returned by the socket system call and the accept 
+       system call.
+       2. portNum is for storing port number on which
+       the accepts connections
+       3. isExit is bool variable which will be used to 
+       end the loop
+       4. The client reads characters from the socket 
+       connection into a dynamic variable (buffer).
+       5. A sockaddr_in is a structure containing an internet 
+       address. This structure is already defined in netinet/in.h, so
+       we don't need to declare it again.
+        DEFINITION:
+        struct sockaddr_in
+        {
+          short   sin_family;
+          u_short sin_port;
+          struct  in_addr sin_addr;
+          char    sin_zero[8];
+        };
+        6. serv_addr will contain the address of the server
+    */
 
+    int client;
+    int portNum = 1500; // NOTE that the port number is same for both client and server
+    bool isExit = false;
+    int bufsize = 1024;
+    char buffer[bufsize];
+    char* ip = (char*)"127.0.0.1";
 
-int main(int argc, char* argv[]) {
-   if (argc < 7) {
-      perror("Too Few Arguments passed in need 6");
-      return -1;
-   }
-   if (atoi(argv[6]) > 3 || atoi(argv[6]) < 1) {
-      perror("Transfer Type is Invalid, can only accept types 1-3");
-      return -1;
-   }
-   
-   char* serverPort = argv[1];         // Servers port number
-   char* serverName = argv[2];         // Servers IP address or Host name
-   int iterations = atoi(argv[3]);     // number of iterations client performs on data transmission using "single write", "writev" or "multiple writes"
-   int nbufs = atoi(argv[4]);          // number of data buffers
-   int bufSize = atoi(argv[5]);        // size of each buffer in bytes
-   int type = atoi(argv[6]);           // type of transfer scenario (1-3)
+    struct sockaddr_in server_addr;
 
-   // check for data buffer size error
-   if (nbufs*bufSize != DATABUFFSIZE) {
-      perror("Data Buffer size needs to be equal to 1500 (nbufs * bufSize == 1500).");
-      return -1;
-   }
+    client = socket(AF_INET, SOCK_STREAM, 0);
 
-   // Displays the parameters
-   cout << "ServerPort: " << serverPort << "\nServerName: " << serverName << "\nInteration: " << iterations
-   << "\nnbufs: " << nbufs << "\nbuffSize: " << bufSize << "\nType: " << type << endl;
+    /* ---------- ESTABLISHING SOCKET CONNECTION ----------*/
+    /* --------------- socket() function ------------------*/
 
-   struct addrinfo hints;             
-   struct addrinfo *servInfo;          // Points to the results
-   memset(&hints, 0, sizeof(hints));   // makes sure the struct hints is empty
-   hints.ai_family = AF_INET;          // Address Family Internet (IPv4 or IPv6)
-   hints.ai_socktype = SOCK_STREAM;    // TCP socket type
+    if (client < 0) 
+    {
+        cout << "\nError establishing socket..." << endl;
+        exit(1);
+    }
 
-   int status = getaddrinfo(serverName, serverPort, &hints, &servInfo); 
+    /*
+        The socket() function creates a new socket.
+        It takes 3 arguments,
+            a. AF_INET: address domain of the socket.
+            b. SOCK_STREAM: Type of socket. a stream socket in 
+            which characters are read in a continuous stream (TCP)
+            c. Third is a protocol argument: should always be 0. The 
+            OS will choose the most appropiate protocol.
+            This will return a small integer and is used for all 
+            references to this socket. If the socket call fails, 
+            it returns -1.
+    */
 
-   // check for error after getaddrinfo
-   if (status < 0) {
-      cout << "getaddrinfo error: " << gai_strerror(status) << endl;
-      return -1;
-   }
+    cout << "\n=> Socket client has been created..." << endl;
+    
+    /* 
+        The variable serv_addr is a structure of sockaddr_in. 
+        sin_family contains a code for the address family. 
+        It should always be set to AF_INET.
+        htons() converts the port number from host byte order 
+        to a port number in network byte order.
+    */
 
-   // get socket descriptor
-   int clientSd = socket(servInfo->ai_family, servInfo->ai_socktype, servInfo->ai_protocol);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(portNum);
 
-   // check for error
-   if (clientSd < 0) {
-      perror("Socket descriptor error");
-      close(clientSd);
-      return -1;
-   } 
-   cout << "Client socket created..." << endl;
+    // this function returns returns 1 if the IP is valid
+    // and 0 if invalid
+    // inet_pton converts IP to packets
+    // inet_ntoa converts back packets to IP
+    //inet_pton(AF_INET, ip, &server_addr.sin_addr);
 
-   status = 0;
-   // connect socket
-   // check for errors
-   status = connect(clientSd, servInfo->ai_addr, servInfo->ai_addrlen);
-   if (status < 0) {
-      cerr << "Connection error!";
-      close(clientSd);
-      return -1;
-   }
-
-   char databuf[nbufs][bufSize]; // data buffer where nbufs * bufSize = 1500
-   struct timeval start, lap, stop; // timval variables for output statistics
-
-   // Get the starting time
-   gettimeofday(&start, NULL);
-   for (int i = 0; i < iterations; i++) {
-      // Scenario 1
-      if (type == 1) {
-         for (int j = 0; j < nbufs; j++) 
-            write(clientSd, databuf[j], bufSize);  // write databuf[j] to clientSd
-      }
-      // Scenario 2
-      else if (type == 2) {
-         struct iovec vector[nbufs]; 
-         for (int j = 0; j < nbufs; j++) {   // allocates data and len in iovec from databuf
-            vector[j].iov_base = databuf[j]; 
-            vector[j].iov_len = bufSize; 
-         } 
-         writev(clientSd, vector, nbufs); // writes entire iovec at once
-      }
-      // Scenario 3
-      else {
-         write(clientSd, databuf, nbufs * bufSize);   // write entire databuf at once
-      }
-   }
-
-   gettimeofday(&lap, NULL);
-
-   long dataTransTime, roundTripTime;
-   int reads = 0;
-
-   read(clientSd, &reads, sizeof(reads));
-   gettimeofday(&stop, NULL);
-   dataTransTime = elapsedTime(start, lap);
-   roundTripTime = elapsedTime(start, stop);
-   printStats(type, dataTransTime, roundTripTime, reads);
-   close(clientSd);
-   freeaddrinfo(servInfo); // free the linked list
-   return 0;
-}
+    /*if (connect(client,(struct sockaddr *)&server_addr, sizeof(server_addr)) == 0)
+        cout << "=> Connection to the server " << inet_ntoa(server_addr.sin_addr) << " with port number: " << portNum << endl;*/
 
 
-// Helper functions
+    /* ---------- CONNECTING THE SOCKET ---------- */
+    /* ---------------- connect() ---------------- */
 
+    if (connect(client,(struct sockaddr *)&server_addr, sizeof(server_addr)) == 0)
+        cout << "=> Connection to the server port number: " << portNum << endl;
 
-/** elapsedTime
- * @brief Takes a starting and stopping timeval and returns the difference
- * @param start The starting timeval
- * @param stop The stopping timeval
- * @return Returns number of milliseconds as long
-*/
-long elapsedTime(timeval start, timeval stop) {
-   return (((stop.tv_sec - start.tv_sec) * 1000000L) + (stop.tv_usec - start.tv_usec));
-}
+    /* 
+        The connect function is called by the client to 
+        establish a connection to the server. It takes 
+        three arguments, the socket file descriptor, the 
+        address of the host to which it wants to connect 
+        (including the port number), and the size of this 
+        address. 
+        This function returns 0 on success and -1 
+        if it fails.
+        Note that the client needs to know the port number of
+        the server but not its own port number.
+    */
 
-/** printStats
- * @brief Prints out the statistics
- * @param type The type of transfer scenario 
- * @param DTT Data transmission time
- * @param RTT round trip time
- * @param reads the number of reads performed on server side
-*/
-void printStats(int type, long DTT, long RTT, int reads) {
-   cout << "Test " << type << ": Data-Transmission Time = " << DTT << " usec, " <<
-   "Round-Trip Time = " << RTT << " usec, " << "#Reads = " << reads << endl;
+    cout << "=> Awaiting confirmation from the server..." << endl; //line 40
+    recv(client, buffer, bufsize, 0);
+    cout << "=> Connection confirmed, you are good to go...";
+
+    cout << "\n\n=> Enter # to end the connection\n" << endl;
+
+    // Once it reaches here, the client can send a message first.
+
+    do {
+        cout << "Client: ";
+        do {
+            cin >> buffer;
+            send(client, buffer, bufsize, 0);
+            if (*buffer == '#') {
+                send(client, buffer, bufsize, 0);
+                *buffer = '*';
+                isExit = true;
+            }
+        } while (*buffer != 42);
+
+        cout << "Server: ";
+        do {
+            recv(client, buffer, bufsize, 0);
+            cout << buffer << " ";
+            if (*buffer == '#') {
+                *buffer = '*';
+                isExit = true;
+            }
+
+        } while (*buffer != 42);
+        cout << endl;
+
+    } while (!isExit);
+
+    /* ---------------- CLOSE CALL ------------- */
+    /* ----------------- close() --------------- */
+
+    /* 
+        Once the server presses # to end the connection,
+        the loop will break and it will close the server 
+        socket connection and the client connection.
+    */
+
+    cout << "\n=> Connection terminated.\nGoodbye...\n";
+
+    close(client);
+    return 0;
 }
