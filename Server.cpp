@@ -1,118 +1,128 @@
-#include <iostream> 
-#include <cstdlib>        // atoi
-#include <sys/time.h>     // gettimeofday
-#include <sys/types.h>    // socket, bind 
-#include <sys/socket.h>   // socket, bind, listen, inet_ntoa 
-#include <netinet/in.h>   // htonl, htons, inet_ntoa 
-#include <arpa/inet.h>    // inet_ntoa 
-#include <netdb.h>        // gethostbyname 
-#include <unistd.h>       // read, write, close 
-#include <strings.h>      // bzero 
-#include <netinet/tcp.h>  // SO_REUSEADDR 
-#include <sys/uio.h>      // writev 
-#include <pthread.h>      // pthread
-#include <cstring>
+#include <iostream>
+#include <string>
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <netdb.h>
+#include <sys/uio.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <fstream>
 
-int main(int argc, char* argv[]) {
-   int bufsize = 1500;
-   char buffer[bufsize];
-   bool isExit = false;
+using namespace std;
 
-   struct addrinfo hints, *res;
-   int clientSd;
+// Server side
+int main(int argc, char *argv[])
+{
+    // for the server, we only need to specify a port number
+    if(argc != 2)
+    {
+        cerr << "Usage: port" << endl;
+        exit(0);
+    }
 
-   // first, load up address structs with getaddrinfo():
+    // grab the port number
+    int port = atoi(argv[1]);
 
-   memset(&hints, 0, sizeof(hints));
-   hints.ai_family = AF_UNSPEC;  // use IPv4 or IPv6, whichever
-   hints.ai_socktype = SOCK_STREAM;
-   hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
+    // buffer to send and receive messages with
+    char msg[1500];
+     
+    // setup a socket and connection tools
+    sockaddr_in servAddr;
+    bzero((char*)&servAddr, sizeof(servAddr));
+    servAddr.sin_family = AF_INET;
+    servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    servAddr.sin_port = htons(port);
+ 
+    // open stream oriented socket with internet address
+    // also keep track of the socket descriptor
+    int serverSd = socket(AF_INET, SOCK_STREAM, 0);
+    if(serverSd < 0)
+    {
+        cerr << "Error establishing the server socket" << endl;
+        exit(0);
+    }
 
-   getaddrinfo(NULL, "1140", &hints, &res);
+    // bind the socket to its local address
+    int bindStatus = bind(serverSd, (struct sockaddr*) &servAddr, sizeof(servAddr));
+    if(bindStatus < 0)
+    {
+        cerr << "Error binding socket to local address" << endl;
+        exit(0);
+    }
 
-   // make a socket:
+    cout << "Waiting for a client to connect..." << endl;
 
-   clientSd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    // listen for up to 5 requests at a time
+    listen(serverSd, 5);
 
-   // bind it to the port we passed in to getaddrinfo():
+    // receive a request from client using accept
+    // we need a new address to connect with the client
+    sockaddr_in newSockAddr;    // address container
+    socklen_t newSockAddrSize = sizeof(newSockAddr);
 
-   bind(clientSd, res->ai_addr, res->ai_addrlen);
+    //  accept, create a new socket descriptor to 
+    //  handle the new connection with client
+    int newSd = accept(serverSd, (sockaddr *)&newSockAddr, &newSockAddrSize);
+    if(newSd < 0)
+    {
+        cerr << "Error accepting request from client!" << endl;
+        exit(1);
+    }
 
-   // listen for connections
-   if (listen(clientSd, 10) < 0) {
-      perror("Can't listen...");
-      exit(1);
-   }
-   std::cout << "Socket is listening for clients..." << std::endl;
-   
+    cout << "Connected with client!" << endl;
 
-   // now accept an incoming connection
-   struct sockaddr_storage clientAddr;
-   socklen_t clientAddrSize = sizeof(clientAddr);
+    //  lets keep track of the session time
+    struct timeval start1, end1;
+    gettimeofday(&start1, NULL);
 
-   int server = accept(clientSd, (struct sockaddr *)&clientAddr, &clientAddrSize);
-   // first check if it is valid or not
-   if (server < 0) 
-      std::cout << "Error on accepting..." << std::endl;
+    //also keep track of the amount of data sent as well
+    int bytesRead, bytesWritten = 0;
+    while(1)
+    {
+        //receive a message from the client (listen)
+        cout << "Awaiting client response..." << endl;
 
-   while (server > 0) {
-      /* 
-         Note that we would only get to this point after a 
-         client has successfully connected to our server. 
-         This reads from the socket. Note that the read() 
-         will block until there is something for it to read 
-         in the socket, i.e. after the client has executed a 
-         the send().
-         It will read either the total number of characters 
-         in the socket or 1500
-      */
-      std::cout << "Client: ";
-      do {
-         recv(server, buffer, bufsize, 0);
-         std::cout << buffer << " ";
-         if (*buffer == '#') {
-            *buffer = '*';
-            isExit = true;
-         }
-      } while (*buffer != '*');
+        memset(&msg, 0, sizeof(msg));   //clear the buffer
 
-      do {
-         std::cout << "\nServer: ";
-         do {
-            std::cin >> buffer;
-            send(server, buffer, bufsize, 0);
-            if (*buffer == '#') {
-               send(server, buffer, bufsize, 0);
-               *buffer = '*';
-               isExit = true;
-            }
-         } while (*buffer != '*');
+        bytesRead += recv(newSd, (char*)&msg, sizeof(msg), 0);
 
-         std::cout << "Client: ";
-         do {
-            recv(server, buffer, bufsize, 0);
-            std::cout << buffer << " ";
-            if (*buffer == '#') {
-               *buffer == '*';
-               isExit = true;
-            }
-         } while (*buffer != '*');
-      } while (!isExit);
+        if(!strcmp(msg, "exit"))
+        {
+            cout << "Client has quit the session" << endl;
+            break;
+        }
 
-      /* 
-         Once a connection has been established, both ends 
-         can both read and write to the connection. Naturally, 
-         everything written by the client will be read by the 
-         server, and everything written by the server will be 
-         read by the client.
-      */
+        cout << "Client: " << msg << endl;
+        cout << ">";
+        string data;
+        getline(cin, data);
+        memset(&msg, 0, sizeof(msg)); //clear the buffer
+        strcpy(msg, data.c_str());
+        if(data == "exit")
+        {
+            //send to the client that server has closed the connection
+            send(newSd, (char*)&msg, strlen(msg), 0);
+            break;
+        }
+        // send the message to client
+        bytesWritten += send(newSd, (char*)&msg, strlen(msg), 0);
+    }
 
-      close(server);
-      std::cout << "\nGoodbye..." << std::endl;
-      isExit = false;
-      exit(1);
-   }
-
-   close(clientSd);
-   return 0;
+    // we need to close the socket descriptors after we're all done
+    gettimeofday(&end1, NULL);
+    close(newSd);
+    close(serverSd);
+    cout << "********Session********" << endl;
+    cout << "Bytes written: " << bytesWritten << " Bytes read: " << bytesRead << endl;
+    cout << "Elapsed time: " << (end1.tv_sec - start1.tv_sec) 
+        << " secs" << endl;
+    cout << "Connection closed..." << endl;
+    return 0;   
 }
